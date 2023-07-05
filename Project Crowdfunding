@@ -1,0 +1,112 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import accuracy_score
+from keras.models import Sequential
+from keras.layers import Dense, LSTM, Dropout
+from keras.optimizers import Adam
+from keras.callbacks import EarlyStopping
+import numpy as np
+
+#Make sure Keras module is available
+
+# Load the dataset
+df = pd.read_csv('kickstarter_data_with_features.csv')  #import 'kickstarter_data_with_features.csv' dataset from kaggle
+
+#Select relevant columns
+selected_columns = ['desc', 'goal', 'keywords', 'disable_communication', 'country', 'currency', 'launched_at', 'deadline', 'state']
+df = df[selected_columns]
+
+# Convert 'disable_communication' column to categorical variable
+df['disable_communication'] = df['disable_communication'].astype('category').cat.codes
+
+# Convert 'country' and 'currency' columns to categorical variables using label encoding
+label_encoder = LabelEncoder()
+df['country'] = label_encoder.fit_transform(df['country'])
+df['currency'] = label_encoder.fit_transform(df['currency'])
+
+# Calculate duration as the difference between 'deadline' and 'launched_at'
+df['duration'] = df['deadline'] - df['launched_at']
+
+# Normalize 'goal' and 'duration' columns using Min-Max scaling
+scaler = MinMaxScaler()
+df[['goal', 'duration']] = scaler.fit_transform(df[['goal', 'duration']])
+
+# Encode and embed text features (e.g., 'desc' and 'keywords')
+
+# One-hot encode 'desc' column
+one_hot_desc = pd.get_dummies(df['desc'], prefix='desc')
+df = pd.concat([df, one_hot_desc], axis=1)
+
+# One-hot encode 'keywords' column
+one_hot_keywords = pd.get_dummies(df['keywords'], prefix='keywords')
+df = pd.concat([df, one_hot_keywords], axis=1)
+
+# Drop original text columns
+df.drop(['desc', 'keywords'], axis=1, inplace=True)
+
+# Separate features and labels
+X = df.drop('state', axis=1)
+y = df['state']
+
+# Split the data into training, development, and test sets
+X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.1, random_state=42)
+X_dev, X_test, y_dev, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+
+# Random Forest Classifier
+rf_classifier = RandomForestClassifier(n_estimators=100, random_state=42)
+rf_classifier.fit(X_train, y_train)
+rf_pred_dev = rf_classifier.predict(X_dev)
+rf_acc_dev = accuracy_score(y_dev, rf_pred_dev)
+print("Random Forest Dev Accuracy:", rf_acc_dev)
+
+# Normal Neural Network
+mlp_classifier = MLPClassifier(hidden_layer_sizes=(64,), activation='relu', solver='adam', random_state=42)
+mlp_classifier.fit(X_train, y_train)
+mlp_pred_dev = mlp_classifier.predict(X_dev)
+mlp_acc_dev = accuracy_score(y_dev, mlp_pred_dev)
+print("Neural Network Dev Accuracy:", mlp_acc_dev)
+
+# RNN Model
+input_dim = X_train.shape[1]
+output_dim = 1
+
+# Convert labels to numpy arrays
+y_train = np.array(y_train)
+y_dev = np.array(y_dev)
+
+# Create RNN model
+rnn_model = Sequential()
+rnn_model.add(LSTM(300, input_shape=(input_dim, 1), return_sequences=True))
+rnn_model.add(Dropout(0.5))
+rnn_model.add(LSTM(300, return_sequences=True))
+rnn_model.add(Dropout(0.5))
+rnn_model.add(LSTM(300))
+rnn_model.add(Dropout(0.5))
+rnn_model.add(Dense(64, activation='relu'))
+rnn_model.add(Dense(output_dim, activation='sigmoid'))
+
+# Compile and train the model
+rnn_model.compile(loss='binary_crossentropy', optimizer=Adam(lr=0.001), metrics=['accuracy'])
+early_stopping = EarlyStopping(patience=5)
+rnn_model.fit(np.expand_dims(X_train, axis=2), y_train, validation_data=(np.expand_dims(X_dev, axis=2), y_dev),
+              epochs=50, batch_size=64, callbacks=[early_stopping])
+
+# Evaluate the model
+rnn_scores = rnn_model.evaluate(np.expand_dims(X_dev, axis=2), y_dev, verbose=0)
+rnn_acc_dev = rnn_scores[1]
+print("RNN Model Dev Accuracy:", rnn_acc_dev)
+
+# Make predictions on the test set
+rf_pred_test = rf_classifier.predict(X_test)
+rf_acc_test = accuracy_score(y_test, rf_pred_test)
+print("Random Forest Test Accuracy:", rf_acc_test)
+
+mlp_pred_test = mlp_classifier.predict(X_test)
+mlp_acc_test = accuracy_score(y_test, mlp_pred_test)
+print("Normal Neural Network Test Accuracy:", mlp_acc_test)
+
+rnn_pred_test = rnn_model.predict_classes(np.expand_dims(X_test, axis=2))
+rnn_acc_test = accuracy_score(y_test, rnn_pred_test)
+print("RNN Model Test Accuracy:", rnn_acc_test)
